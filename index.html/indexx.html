@@ -1,0 +1,1368 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Carteira de Clientes e Kanban</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
+        }
+        .card {
+            background-color: white;
+            border-radius: 0.75rem;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+            padding: 1.5rem;
+        }
+        .tab-button {
+            transition: all 0.2s;
+            cursor: pointer;
+        }
+        .tab-button.active {
+            border-bottom: 3px solid #4f46e5;
+            color: #4f46e5;
+            font-weight: 600;
+        }
+        .kanban-col.drag-over {
+            background-color: #eef2ff; /* indigo-50 */
+            border: 2px dashed #818cf8; /* indigo-400 */
+        }
+        .kanban-card:hover {
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+            transform: translateY(-2px);
+            transition: all 0.1s ease-in-out;
+        }
+        /* Estilo para o modal de detalhes */
+        #client-detail-modal {
+            max-height: 90vh;
+        }
+        #client-detail-modal-content {
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Estilos do Gráfico de Rosca (Donut Chart) em SVG */
+        .chart-container {
+            position: relative;
+            width: 100%;
+            padding-top: 100%; /* 1:1 Aspect Ratio */
+        }
+        .chart-svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        .chart-slice {
+            transition: opacity 0.3s;
+        }
+        .chart-slice:hover {
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app" class="min-h-screen">
+    <!-- Componente de Alerta Customizado (Substituindo alert() e confirm()) -->
+    <div id="custom-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-50">
+        <div class="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full text-center">
+            <p id="modal-message" class="text-lg font-semibold text-gray-800 mb-4"></p>
+            <div id="modal-actions" class="flex justify-end space-x-3">
+                <!-- Buttons will be injected here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Detalhes do Cliente e AI -->
+    <div id="client-detail-modal" class="hidden fixed inset-0 bg-gray-600 bg-opacity-75 flex items-center justify-center z-40 p-4">
+        <div id="client-detail-modal-content" class="bg-white rounded-xl shadow-2xl max-w-4xl w-full overflow-y-auto">
+            <!-- Conteúdo injetado pelo JS -->
+        </div>
+    </div>
+
+
+    <!-- Header e Navegação de Abas -->
+    <header class="bg-white shadow-md sticky top-0 z-10">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <h1 class="text-2xl font-bold text-gray-800">
+                    Carteira de Clientes 2025
+                </h1>
+                <nav class="flex space-x-1">
+                    <button class="tab-button active px-4 py-2 flex items-center" data-view="dashboard">
+                        <i data-lucide="layout-dashboard" class="w-5 h-5 mr-1"></i> Dashboard
+                    </button>
+                    <button class="tab-button px-4 py-2 flex items-center" data-view="kanban">
+                        <i data-lucide="columns-3" class="w-5 h-5 mr-1"></i> Kanban
+                    </button>
+                    <button class="tab-button px-4 py-2 flex items-center" data-view="register">
+                        <i data-lucide="user-plus" class="w-5 h-5 mr-1"></i> Cadastrar Clientes
+                    </button>
+                </nav>
+            </div>
+        </div>
+    </header>
+
+    <!-- Conteúdo Principal -->
+    <main class="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+        <div id="content-container">
+             <div class="card p-6 text-center text-gray-600" id="loading-state">
+                <i data-lucide="loader-circle" class="w-6 h-6 animate-spin mx-auto mb-3 text-indigo-500"></i>
+                <p class="font-semibold">Carregando dados e autenticando...</p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Template para a Tabela de Clientes (Parte inferior) -->
+    <template id="client-list-template">
+        <div class="mt-10">
+            <h3 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                <i data-lucide="list-ordered" class="w-5 h-5 inline-block mr-2 text-indigo-600"></i>
+                Clientes Cadastrados
+            </h3>
+            <div class="overflow-x-auto card">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Nome</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Valor Estimado</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Grau (A, B, C)</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Responsável</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status Kanban</th>
+                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody id="client-table-body" class="bg-white divide-y divide-gray-200">
+                        <!-- Linhas de clientes serão injetadas via JS -->
+                    </tbody>
+                </table>
+                <div id="no-clients-message" class="text-center py-6 text-gray-500 hidden">
+                    Nenhum cliente encontrado para este filtro.
+                </div>
+            </div>
+        </div>
+    </template>
+
+</div>
+
+<!-- Importe os módulos do Firebase via CDN -->
+<script type="module">
+  import { initializeApp } from "[https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js](https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js)";
+  import { getAuth, signInAnonymously } from "[https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js](https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js)";
+  import { getFirestore, doc, setDoc } from "[https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js](https://www.gstatic.com/firebasejs/11.0.1/firebase-firestore.js)";
+
+        const firebaseConfig = {
+  apiKey: "AIzaSyBBBW98Evht85fPk2Z12EM6jQbQaon38Xg",
+  authDomain: "carteira-versa-fad45.firebaseapp.com",
+  projectId: "carteira-versa-fad45",
+  storageBucket: "carteira-versa-fad45.firebasestorage.app",
+  messagingSenderId: "442086701584",
+  appId: "1:442086701584:web:1ba791d1400bdf3d206895",
+  measurementId: "G-RF5WMWCRLJ"
+};
+
+// Inicialize o Firebase
+  const app = initializeApp(firebaseConfig);
+  const auth = getAuth(app);
+  const db = getFirestore(app);
+
+//  Função Exemplo para testar a conexão
+  async function testarFirebase() {
+    try {
+      // Autentica o usuário para ter permissão de escrita
+      await signInAnonymously(auth);
+      console.log("Autenticado anonimamente!");
+// Tenta gravar um documento simples
+      await setDoc(doc(db, "teste", "id_unico"), {
+        mensagem: "Firebase funcionando!",
+        data: new Date()
+      });
+      console.log("Dados gravados com sucesso!");
+    } catch (error) {
+      console.error("Erro ao conectar:", error);
+    }
+  }
+
+  testarFirebase();
+</script>
+
+    // Configurações globais do Canvas
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+    const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+    // Variáveis globais para Firebase e Estado
+    let app, db, auth;
+    let userId = null;
+    let isAuthReady = false;
+    
+    // Armazenamento centralizado de clientes (atualizado via onSnapshot)
+    window.clientsData = []; 
+    window.isClientsReady = false;
+
+    // Mapeamento para funções globais
+    window.updateClientStatus = (clientId, newStatus) => updateClientStatus(clientId, newStatus);
+    window.renderClientDetailModal = (clientId) => {
+        const client = window.clientsData.find(c => c.id === clientId);
+        if (client) renderClientDetailModal(client);
+    };
+
+    /**
+     * Função de Inicialização do Firebase e Autenticação.
+     */
+    async function setupFirebase() {
+        console.log("Iniciando setup do Firebase...");
+        
+        if (Object.keys(firebaseConfig).length === 0) {
+            console.error("Firebase config não encontrada. O aplicativo não terá persistência de dados.");
+            return;
+        }
+
+        try {
+            setLogLevel('Debug');
+            app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            
+            await setPersistence(auth, browserLocalPersistence);
+            
+            // 1. Autenticação
+            if (initialAuthToken) {
+                await signInWithCustomToken(auth, initialAuthToken);
+            } else {
+                await signInAnonymously(auth);
+            }
+            
+            // 2. Listener de Estado de Autenticação
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    userId = user.uid;
+                    isAuthReady = true;
+                    console.log(`Usuário autenticado: ${userId}`);
+                    setupFirestoreListener();
+                } else {
+                    userId = null;
+                    isAuthReady = true; // Marca como pronto mesmo se for anônimo/deslogado
+                    window.isClientsReady = true;
+                    console.warn("Nenhum usuário autenticado. Usando ID anônimo temporário se não houver token.");
+                    showCurrentView(); // Garante que a view carrega mesmo sem dados
+                }
+            });
+
+        } catch (error) {
+            console.error("Erro durante o setup do Firebase:", error);
+            document.getElementById('loading-state').innerHTML = `
+                <p class="text-red-500">Erro de inicialização do Firebase: ${error.message}</p>
+            `;
+        }
+    }
+
+    /**
+     * Configura o listener em tempo real para a coleção de clientes.
+     */
+    function setupFirestoreListener() {
+        if (!isAuthReady || !db) return;
+
+        // O caminho para dados públicos compartilhados
+        const path = `artifacts/${appId}/public/data/clients`;
+        const clientsCol = collection(db, path);
+        const q = query(clientsCol);
+
+        console.log(`Configurando onSnapshot para a coleção: ${path}`);
+
+        onSnapshot(q, (snapshot) => {
+            const newClients = [];
+            snapshot.forEach((doc) => {
+                newClients.push({ 
+                    id: doc.id,
+                    ...doc.data() 
+                });
+            });
+
+            window.clientsData = newClients;
+            window.isClientsReady = true;
+            console.log(`Dados de clientes atualizados (${newClients.length} itens).`);
+            
+            // Re-renderiza a view atual com os novos dados
+            showCurrentView(); 
+            
+            // Se o DB estiver vazio na primeira carga, adicione os dados de fallback
+            if (newClients.length === 0) {
+                 seedDatabase(clientsCol);
+            }
+
+        }, (error) => {
+            console.error("Erro no listener onSnapshot:", error);
+            document.getElementById('loading-state').innerHTML = `
+                <p class="text-red-500">Erro ao carregar dados em tempo real: ${error.message}</p>
+            `;
+        });
+    }
+
+    /**
+     * Seeds the database with fallback data if the collection is empty.
+     */
+    async function seedDatabase(clientsCol) {
+        console.log("Banco de dados vazio. Seeding com fallback clients...");
+        // Adiciona cada cliente de fallback como um novo documento
+        for (const client of window.FALLBACK_CLIENTS) {
+            try {
+                // Remove o ID temporário para que o Firestore gere um novo
+                const { id, ...dataToSave } = client; 
+                await addDoc(clientsCol, {
+                     ...dataToSave,
+                     createdAt: new Date()
+                });
+            } catch (e) {
+                console.error("Erro ao adicionar cliente de fallback:", e);
+            }
+        }
+        // O onSnapshot lidará com o re-render após a inserção
+    }
+
+    // Chama a inicialização do Firebase
+    setupFirebase();
+
+    // Exporta as funções principais para o escopo global do script principal
+    window.db = db;
+    window.auth = auth;
+    window.appId = appId;
+
+    // Certifica-se de que o restante do script seja executado após a inicialização
+    // (O restante do JS é injetado no final deste bloco)
+</script>
+
+<script>
+    // Código JavaScript Principal (A partir daqui, o Firestore é usado)
+
+    // --- Configuração da API do Gemini (AI) ---
+    const API_KEY = ""; 
+    const MODEL_NAME = "gemini-2.5-flash-preview-09-2025";
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_NAME}:generateContent?key=${API_KEY}`;
+    
+    // --- Variáveis Globais e Utilitários ---
+    let currentView = 'dashboard';
+    const MAX_HISTORY = 10; 
+
+    // Colunas do Kanban (Estágios do Negócio)
+    const KANBAN_COLUMNS = [
+        { id: 'Em Andamento', title: 'Em Andamento', color: 'bg-blue-500', icon: 'zap' },
+        { id: 'Fechado', title: 'Fechado', color: 'bg-green-500', icon: 'check-circle' },
+        { id: 'Perdido', title: 'Perdido', color: 'bg-red-500', icon: 'x-circle' },
+    ];
+    const KANBAN_STATUS_MAP = {
+        'Em Andamento': { label: 'Em Andamento', color: 'text-blue-600 bg-blue-100' },
+        'Fechado': { label: 'Fechado', color: 'text-green-600 bg-green-100' },
+        'Perdido': { label: 'Perdido', color: 'text-red-600 bg-red-100' },
+    };
+    
+    // Cores para os gráficos (Tailwind classes)
+    const GRAPH_COLORS = [
+        'text-indigo-600', 'text-teal-600', 'text-amber-500', 
+        'text-sky-500', 'text-pink-500', 'text-fuchsia-600', 'text-gray-500'
+    ];
+    const GRAPH_BG_COLORS = [
+        '#4f46e5', '#0d9488', '#f59e0b', 
+        '#0ea5e9', '#ec4899', '#c026d3', '#6b7280'
+    ];
+    
+    // Fallback clients para o caso de primeira inicialização com DB vazio
+    window.FALLBACK_CLIENTS = [
+        { name: 'Tech Solutions', valorEstimado: 150000.00, mesChegada: 1, anoChegada: 2025, grauABC: 'A', responsavel: 'João', indicador: 'Prospecção Fria', kanbanStatus: 'Em Andamento', notes: 'Contato inicial muito positivo. Empresa precisa de uma solução robusta para gestão de inventário. Decisor é o CEO João.' },
+        { name: 'Gamma Corp', valorEstimado: 10000.00, mesChegada: 4, anoChegada: 2025, grauABC: 'C', responsavel: 'Maria', indicador: 'Mídia Paga', kanbanStatus: 'Em Andamento', notes: 'Pequena empresa, mas com potencial de expansão. Está comparando nosso preço com um concorrente mais barato.' },
+        { name: 'Alpha Marketing', valorEstimado: 70000.00, mesChegada: 2, anoChegada: 2025, grauABC: 'B', responsavel: 'João', indicador: 'Indicação', kanbanStatus: 'Fechado', notes: 'Contrato fechado! Projeto de e-commerce completo. Pagarão 50% adiantado.' },
+        { name: 'Delta Serviços', valorEstimado: 90000.00, mesChegada: 5, anoChegada: 2025, grauABC: 'A', responsavel: 'Maria', indicador: 'Prospecção Fria', kanbanStatus: 'Fechado', notes: 'Fechado após 3 meses de negociação. Foco na redução de custos operacionais.' },
+        { name: 'Beta Tech', valorEstimado: 50000.00, mesChegada: 3, anoChegada: 2024, grauABC: 'C', responsavel: 'Carlos', indicador: 'Indicação', kanbanStatus: 'Perdido', notes: 'Perdido para concorrente de menor custo. Cliente priorizou o preço, não a qualidade.' },
+        { name: 'Epsilon Inovação', valorEstimado: 25000.00, mesChegada: 6, anoChegada: 2024, grauABC: 'B', responsavel: 'Carlos', indicador: 'Mídia Paga', kanbanStatus: 'Perdido', notes: 'O projeto foi cancelado internamente pelo cliente por falta de budget.' },
+        { name: 'Zeta Software', valorEstimado: 30000.00, mesChegada: 7, anoChegada: 2025, grauABC: 'B', responsavel: 'João', indicador: 'Indicação', kanbanStatus: 'Em Andamento', notes: 'Cliente em fase de aprovação final do budget.' },
+        { name: 'Theta Infra', valorEstimado: 200000.00, mesChegada: 8, anoChegada: 2025, grauABC: 'A', responsavel: 'Maria', indicador: 'Eventos', kanbanStatus: 'Em Andamento', notes: 'Negócio grande, CEO envolvido, alto potencial.' },
+    ];
+
+
+    // --- Funções de Histórico Dinâmico (Mantido em localStorage para UI auxiliar) ---
+    // NOTA: Para listas auxiliares como estas, o localStorage é aceitável, mas o core de clientes *deve* estar no Firestore.
+    function getResponsavelList() {
+        try {
+            const stored = localStorage.getItem('responsavelList');
+            return stored ? JSON.parse(stored) : ['João', 'Maria', 'Carlos'];
+        } catch {
+            return ['João', 'Maria', 'Carlos'];
+        }
+    }
+
+    function saveResponsavelList(newValue) {
+        if (!newValue || newValue.trim() === '') return getResponsavelList();
+        let list = getResponsavelList().filter(item => item !== newValue);
+        list.unshift(newValue);
+        list = list.slice(0, MAX_HISTORY);
+        localStorage.setItem('responsavelList', JSON.stringify(list));
+        return list;
+    }
+
+    function getIndicadorList() {
+        try {
+            const stored = localStorage.getItem('indicadorList');
+            return stored ? JSON.parse(stored) : ['Mídia Paga', 'Indicação', 'Prospecção Fria'];
+        } catch {
+            return ['Mídia Paga', 'Indicação', 'Prospecção Fria'];
+        }
+    }
+
+    function saveIndicadorList(newValue) {
+        if (!newValue || newValue.trim() === '') return getIndicadorList();
+        let list = getIndicadorList().filter(item => item !== newValue);
+        list.unshift(newValue);
+        list = list.slice(0, MAX_HISTORY);
+        localStorage.setItem('indicadorList', JSON.stringify(list));
+        return list;
+    }
+    
+    // --- Funções de Manipulação de Clientes (Firestore-based) ---
+    
+    /**
+     * Retorna o estado atual dos clientes do Firestore (mantido por onSnapshot).
+     */
+    function getStoredClients() {
+        return window.clientsData;
+    }
+
+    // Remoção das funções obsoletas saveClients e generateId
+
+    function formatCurrency(value) {
+        return new Intl.NumberFormat('pt-BR', {
+            style: 'currency',
+            currency: 'BRL',
+            minimumFractionDigits: 2
+        }).format(value);
+    }
+
+    const MONTH_MAP = {
+        0: 'Todos os Meses', 1: 'Janeiro', 2: 'Fevereiro', 3: 'Março', 4: 'Abril', 
+        5: 'Maio', 6: 'Junho', 7: 'Julho', 8: 'Agosto', 9: 'Setembro', 
+        10: 'Outubro', 11: 'Novembro', 12: 'Dezembro'
+    };
+    
+    let filterMonth = 0;
+    let filterYear = new Date().getFullYear();
+
+    // --- Lógica do Modal (Substituindo alert/confirm) ---
+    const modal = document.getElementById('custom-modal');
+    const modalMessage = document.getElementById('modal-message');
+    const modalActions = document.getElementById('modal-actions');
+
+    function showModal(message, isConfirmation = false) {
+        return new Promise(resolve => {
+            modalMessage.textContent = message;
+            modalActions.innerHTML = ''; 
+
+            if (isConfirmation) {
+                const confirmBtn = document.createElement('button');
+                confirmBtn.textContent = 'Confirmar';
+                confirmBtn.className = 'px-4 py-2 bg-red-600 text-white font-medium rounded-lg hover:bg-red-700 transition duration-150';
+                confirmBtn.onclick = () => { modal.classList.add('hidden'); resolve(true); };
+
+                const cancelBtn = document.createElement('button');
+                cancelBtn.textContent = 'Cancelar';
+                cancelBtn.className = 'px-4 py-2 bg-gray-300 text-gray-800 font-medium rounded-lg hover:bg-gray-400 transition duration-150';
+                cancelBtn.onclick = () => { modal.classList.add('hidden'); resolve(false); };
+
+                modalActions.appendChild(cancelBtn);
+                modalActions.appendChild(confirmBtn);
+            } else {
+                const okBtn = document.createElement('button');
+                okBtn.textContent = 'Entendido';
+                okBtn.className = 'w-full px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition duration-150';
+                okBtn.onclick = () => { modal.classList.add('hidden'); resolve(true); };
+                modalActions.appendChild(okBtn);
+            }
+            
+            modal.classList.remove('hidden');
+        });
+    }
+
+    // --- Lógica de Chamada da IA (Gemini) ---
+
+    async function fetchWithRetry(url, options, retries = 3) {
+        for (let i = 0; i < retries; i++) {
+            try {
+                const response = await fetch(url, options);
+                if (response.ok) {
+                    return response;
+                }
+                if (response.status === 429 && i < retries - 1) { 
+                    const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                } else {
+                    throw new Error(`API returned status ${response.status}: ${response.statusText}`);
+                }
+            } catch (error) {
+                if (i === retries - 1) {
+                    console.error("Erro fatal após retentativas:", error);
+                    throw error;
+                }
+                const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
+                await new Promise(resolve => setTimeout(resolve, delay));
+            }
+        }
+        throw new Error("Falha na requisição da API após todas as retentativas.");
+    }
+
+    async function callAIForStrategy(client) {
+        const aiOutputArea = document.getElementById('ai-strategy-output');
+        const aiButton = document.getElementById('generate-ai-strategy-btn');
+        
+        aiOutputArea.innerHTML = `
+            <div class="flex items-center justify-center space-x-2 text-indigo-600">
+                <i data-lucide="loader-circle" class="w-5 h-5 animate-spin"></i>
+                <span>Gerando estratégia... (Pode levar alguns segundos com a pesquisa web)</span>
+            </div>
+        `;
+        lucide.createIcons();
+        aiButton.disabled = true;
+
+        const systemPrompt = "Você é um consultor de estratégia de vendas sênior e especializado em fechar negócios complexos. Sua resposta deve ser concisa, focada e apresentar três ações imediatas para a equipe comercial, baseadas nas informações fornecidas e nas últimas tendências de mercado. Use o português de Portugal.";
+        const userQuery = `Analise as seguintes informações do cliente e o contexto do negócio. Forneça uma estratégia de fechamento de venda detalhada.
+
+* **Cliente:** ${client.name}
+* **Grau de Potencial (A, B, C):** ${client.grauABC}
+* **Status Kanban:** ${client.kanbanStatus}
+* **Valor Estimado:** ${formatCurrency(client.valorEstimado)}
+* **Responsável:** ${client.responsavel}
+* **Indicador:** ${client.indicador}
+* **Detalhes e Notas do Cliente:** ${client.notes || 'Nenhuma nota detalhada fornecida.'}
+
+Com base nesses dados e nas últimas informações de mercado (utilize a pesquisa web), quais são as 3 melhores ações para fechar este negócio? Formate o resultado como uma lista numerada.`;
+        
+        const payload = {
+            contents: [{ parts: [{ text: userQuery }] }],
+            tools: [{ "google_search": {} }], // Habilita Grounding (Pesquisa Google)
+            systemInstruction: { parts: [{ text: systemPrompt }] },
+        };
+
+        try {
+            const response = await fetchWithRetry(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const result = await response.json();
+            const candidate = result.candidates?.[0];
+
+            if (candidate && candidate.content?.parts?.[0]?.text) {
+                const text = candidate.content.parts[0].text;
+                let sources = [];
+                const groundingMetadata = candidate.groundingMetadata;
+
+                if (groundingMetadata && groundingMetadata.groundingAttributions) {
+                    sources = groundingMetadata.groundingAttributions
+                        .map(attribution => ({
+                            uri: attribution.web?.uri,
+                            title: attribution.web?.title,
+                        }))
+                        .filter(source => source.uri && source.title)
+                        .slice(0, 3); 
+                }
+                
+                let sourceHtml = '';
+                if (sources.length > 0) {
+                    sourceHtml = `
+                        <p class="text-xs text-gray-500 mt-4 mb-2">Fontes Web Consultadas (para contexto de mercado):</p>
+                        <ul class="list-disc list-inside text-xs text-gray-500 space-y-1">
+                            ${sources.map(s => `<li><a href="${s.uri}" target="_blank" class="text-indigo-500 hover:underline">${s.title}</a></li>`).join('')}
+                        </ul>
+                    `;
+                }
+
+                // Substitui quebras de linha por <br> para renderização simples
+                const formattedText = text.replace(/\n/g, '<br>');
+
+                aiOutputArea.innerHTML = `
+                    <div class="p-4 bg-green-50 border border-green-200 rounded-lg">
+                        <h4 class="font-bold text-green-700 mb-2 flex items-center">
+                            <i data-lucide="brain" class="w-5 h-5 mr-2"></i> Estratégia Recomendada pela IA
+                        </h4>
+                        <div class="text-gray-800">${formattedText}</div>
+                    </div>
+                    ${sourceHtml}
+                `;
+
+            } else {
+                aiOutputArea.innerHTML = `
+                    <div class="p-4 bg-red-100 border border-red-300 rounded-lg text-red-700">
+                        Erro: Não foi possível gerar a estratégia. A resposta da API está incompleta ou houve um problema na geração.
+                    </div>
+                `;
+            }
+
+        } catch (error) {
+            console.error("Erro na chamada da API Gemini:", error);
+            aiOutputArea.innerHTML = `
+                <div class="p-4 bg-red-100 border border-red-300 rounded-lg text-red-700">
+                    Erro ao conectar ou receber a resposta da IA. Verifique o console.
+                </div>
+            `;
+        } finally {
+            aiButton.disabled = false;
+            lucide.createIcons();
+        }
+    }
+
+
+    // --- Componente Modal de Detalhes e AI ---
+
+    /**
+     * Salva as notas do cliente no Firestore.
+     */
+    async function saveClientNotes(clientId, newNotes) {
+        if (!window.db) return showModal("Erro: Firestore não inicializado.");
+        
+        try {
+            const clientDocRef = doc(window.db, `artifacts/${window.appId}/public/data/clients`, clientId);
+            await updateDoc(clientDocRef, { notes: newNotes });
+            showModal("Notas do cliente salvas com sucesso!");
+        } catch (e) {
+            console.error("Erro ao salvar notas no Firestore:", e);
+            showModal("Erro ao salvar notas. Verifique o console.");
+        }
+    }
+
+
+    function renderClientDetailModal(client) {
+        const modalContainer = document.getElementById('client-detail-modal-content');
+        
+        const statusInfo = KANBAN_STATUS_MAP[client.kanbanStatus] || { label: 'Desconhecido', color: 'text-gray-600 bg-gray-100' };
+        
+        modalContainer.innerHTML = `
+            <div class="flex justify-between items-center p-6 border-b border-gray-200 sticky top-0 bg-white z-10">
+                <h2 class="text-2xl font-bold text-gray-800 flex items-center">
+                    Detalhes do Cliente: <span class="ml-2 text-indigo-600">${client.name}</span>
+                </h2>
+                <button id="close-detail-modal" class="p-2 text-gray-400 hover:text-gray-600 rounded-full hover:bg-gray-100">
+                    <i data-lucide="x" class="w-6 h-6"></i>
+                </button>
+            </div>
+            
+            <div class="p-6 overflow-y-auto flex-grow">
+                
+                <!-- Informações Principais -->
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <div class="p-4 border rounded-lg bg-gray-50">
+                        <p class="text-sm font-medium text-gray-500">VALOR ESTIMADO</p>
+                        <p class="text-xl font-bold text-gray-900">${formatCurrency(client.valorEstimado)}</p>
+                    </div>
+                    <div class="p-4 border rounded-lg bg-gray-50">
+                        <p class="text-sm font-medium text-gray-500">GRAU (A, B, C)</p>
+                        <p class="text-xl font-bold text-gray-900">${client.grauABC}</p>
+                    </div>
+                    <div class="p-4 border rounded-lg bg-gray-50">
+                        <p class="text-sm font-medium text-gray-500">RESPONSÁVEL</p>
+                        <p class="text-xl font-bold text-gray-900">${client.responsavel}</p>
+                    </div>
+                    <div class="p-4 border rounded-lg ${statusInfo.color}">
+                        <p class="text-sm font-medium text-gray-800">STATUS KANBAN</p>
+                        <p class="text-xl font-bold">${statusInfo.label}</p>
+                    </div>
+                </div>
+
+                <!-- Seção de Notas e AI -->
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    
+                    <!-- 1. Notas do Cliente -->
+                    <div>
+                        <h3 class="text-xl font-semibold text-gray-800 mb-3 flex items-center">
+                            <i data-lucide="file-text" class="w-5 h-5 mr-2 text-indigo-500"></i> Notas Detalhadas
+                        </h3>
+                        <textarea id="client-notes-textarea" class="w-full h-40 p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500" placeholder="Descreva todas as informações importantes do cliente e do negócio aqui para que a IA possa analisar.">${client.notes || ''}</textarea>
+                        <button id="save-notes-btn" class="mt-2 w-full py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700 transition duration-150 flex items-center justify-center">
+                            <i data-lucide="save" class="w-5 h-5 mr-2"></i> Salvar Notas
+                        </button>
+                    </div>
+
+                    <!-- 2. Assistente de Estratégia AI -->
+                    <div>
+                        <h3 class="text-xl font-semibold text-gray-800 mb-3 flex items-center">
+                            <i data-lucide="sparkles" class="w-5 h-5 mr-2 text-purple-500"></i> Assistente de Estratégia (IA)
+                        </h3>
+                        <button id="generate-ai-strategy-btn" class="w-full py-3 bg-purple-600 text-white font-semibold rounded-lg hover:bg-purple-700 transition duration-150 flex items-center justify-center">
+                            <i data-lucide="rocket" class="w-5 h-5 mr-2"></i> Gerar Estratégia de Fechamento
+                        </button>
+                        
+                        <div id="ai-strategy-output" class="mt-4 p-3 border border-dashed border-gray-300 rounded-lg bg-gray-50 min-h-24 flex items-center justify-center text-gray-500 text-sm">
+                            Clique no botão acima para receber o conselho de um consultor de vendas sênior (Gemini AI).
+                        </div>
+                    </div>
+                </div>
+                
+            </div>
+            
+            <div class="p-4 border-t border-gray-200 sticky bottom-0 bg-white text-right">
+                <button id="close-detail-modal-footer" class="px-6 py-2 bg-gray-200 text-gray-800 font-medium rounded-lg hover:bg-gray-300 transition duration-150">
+                    Fechar
+                </button>
+            </div>
+        `;
+
+        const detailModal = document.getElementById('client-detail-modal');
+        detailModal.classList.remove('hidden');
+
+        // Evento de fechar
+        document.getElementById('close-detail-modal').addEventListener('click', () => detailModal.classList.add('hidden'));
+        document.getElementById('close-detail-modal-footer').addEventListener('click', () => detailModal.classList.add('hidden'));
+
+        // Evento de salvar notas
+        document.getElementById('save-notes-btn').addEventListener('click', () => {
+            const notesTextarea = document.getElementById('client-notes-textarea');
+            saveClientNotes(client.id, notesTextarea.value);
+        });
+
+        // Evento de gerar estratégia com IA
+        document.getElementById('generate-ai-strategy-btn').addEventListener('click', () => {
+            // Garante que as notas mais recentes sejam usadas (mesmo que não salvas no Firestore ainda)
+            const notesTextarea = document.getElementById('client-notes-textarea');
+            client.notes = notesTextarea.value;
+            callAIForStrategy(client);
+        });
+
+        lucide.createIcons();
+    }
+    
+    // --- Lógica de Kanban e Status ---
+
+    /**
+     * Atualiza o status do kanban de um cliente no Firestore.
+     */
+    async function updateClientStatus(clientId, newStatus) {
+        if (!window.db) return showModal("Erro: Firestore não inicializado.");
+
+        try {
+            const clientDocRef = doc(window.db, `artifacts/${window.appId}/public/data/clients`, clientId);
+            await updateDoc(clientDocRef, { kanbanStatus: newStatus });
+            // Não precisa chamar showCurrentView() aqui, pois o onSnapshot fará isso
+            console.log(`Status do cliente ${clientId} atualizado para ${newStatus}`);
+        } catch (e) {
+            console.error("Erro ao atualizar status no Firestore:", e);
+            showModal("Erro ao mover cartão no Kanban. Verifique o console.");
+        }
+    }
+    
+    function renderKanbanView() {
+        if (!window.isClientsReady) {
+            document.getElementById('content-container').innerHTML = document.getElementById('loading-state').outerHTML;
+            lucide.createIcons();
+            return;
+        }
+        
+        const allClients = getStoredClients();
+        const clientsByGrau = allClients.reduce((acc, client) => {
+            const status = client.kanbanStatus; 
+            if (!acc[status]) {
+                acc[status] = [];
+            }
+            acc[status].push(client);
+            return acc;
+        }, {});
+
+        let html = `
+            <h2 class="text-lg font-semibold text-gray-600 mb-6">
+                Visão Kanban: Arraste e solte cartões para mudar o status. Clique para ver detalhes e usar o Assistente AI.
+            </h2>
+            <div id="kanban-board" class="grid grid-cols-1 md:grid-cols-3 gap-6 overflow-x-auto min-h-96">
+                <!-- Colunas serão injetadas aqui -->
+            </div>
+        `;
+
+        const container = document.createElement('div');
+        container.innerHTML = html;
+        const board = container.querySelector('#kanban-board');
+
+        KANBAN_COLUMNS.forEach(column => {
+            const clientsInColumn = clientsByGrau[column.id] || [];
+            const totalValue = clientsInColumn.reduce((sum, c) => sum + c.valorEstimado, 0); 
+
+            const colElement = document.createElement('div');
+            colElement.className = 'kanban-col p-4 bg-gray-100 rounded-lg shadow-inner flex flex-col space-y-3 min-h-96';
+            colElement.setAttribute('data-status', column.id); // Usando data-status
+            colElement.ondragover = (e) => handleDragOver(e);
+            colElement.ondragleave = (e) => handleDragLeave(e);
+            colElement.ondrop = (e) => handleDrop(e);
+
+
+            const statusColorMap = {
+                'Em Andamento': 'border-blue-500',
+                'Fechado': 'border-green-500',
+                'Perdido': 'border-red-500',
+            };
+            const cardBorderColor = statusColorMap[column.id] || 'border-gray-500';
+
+            colElement.innerHTML = `
+                <h3 class="text-lg font-bold text-gray-800 flex items-center mb-2 p-2 rounded-lg ${column.color} text-white justify-between">
+                    <span class="flex items-center">
+                        <i data-lucide="${column.icon}" class="w-5 h-5 mr-2"></i> 
+                        ${column.title}
+                    </span>
+                    <span class="text-sm font-semibold">(${clientsInColumn.length})</span>
+                </h3>
+                <div class="space-y-3 flex-grow" id="kanban-list-${column.id}">
+                    ${clientsInColumn.map(client => `
+                        <div class="kanban-card card p-4 border-l-4 ${cardBorderColor} cursor-pointer" 
+                            draggable="true" 
+                            data-id="${client.id}"
+                            data-status="${client.kanbanStatus}"
+                            data-value="${client.valorEstimado}"
+                            onclick="renderClientDetailModal('${client.id}')"
+                            ondragstart="handleDragStart(event)">
+                            <p class="font-bold text-gray-900 truncate">${client.name}</p>
+                            <p class="text-sm text-gray-600">Grau: ${client.grauABC} | Resp: ${client.responsavel}</p>
+                            <p class="text-sm font-semibold text-indigo-600">${formatCurrency(client.valorEstimado)}</p>
+                        </div>
+                    `).join('')}
+                    ${clientsInColumn.length === 0 ? `<div class="text-center py-6 text-gray-500 text-sm">Arraste clientes para esta coluna.</div>` : ''}
+                </div>
+                <div class="mt-2 pt-2 border-t border-gray-300 text-sm font-semibold text-gray-700">
+                    Valor Total: ${formatCurrency(totalValue)}
+                </div>
+            `;
+
+            board.appendChild(colElement);
+        });
+        
+        document.getElementById('content-container').innerHTML = container.innerHTML;
+        lucide.createIcons();
+    }
+    
+    // Funções de Drag and Drop
+    function handleDragStart(e) {
+        e.dataTransfer.setData('text/plain', e.target.dataset.id);
+        e.target.classList.add('opacity-50');
+    }
+
+    function handleDragOver(e) {
+        e.preventDefault(); 
+        const col = e.currentTarget;
+        if (col.classList.contains('kanban-col')) {
+            col.classList.add('drag-over');
+        }
+    }
+
+    function handleDragLeave(e) {
+        const col = e.currentTarget;
+        if (col.classList.contains('kanban-col')) {
+            col.classList.remove('drag-over');
+        }
+    }
+
+    function handleDrop(e) {
+        e.preventDefault();
+        const col = e.currentTarget;
+        col.classList.remove('drag-over');
+        const clientId = e.dataTransfer.getData('text/plain');
+        const newStatus = col.dataset.status;
+
+        const draggedElement = document.querySelector(`.kanban-card[data-id="${clientId}"]`);
+        if (draggedElement) {
+            draggedElement.classList.remove('opacity-50');
+            // Chama a função de atualização do Firestore
+            updateClientStatus(clientId, newStatus);
+        }
+    }
+    
+    // --- Lógica de Cadastro e Tabela (Registro e Dashboard) ---
+
+    /**
+     * Adiciona um novo cliente ao Firestore.
+     */
+    async function addClientToFirestore(clientData) {
+        if (!window.db) return showModal("Erro: Firestore não inicializado.");
+        
+        try {
+            const clientsCol = collection(window.db, `artifacts/${window.appId}/public/data/clients`);
+            await addDoc(clientsCol, {
+                ...clientData,
+                kanbanStatus: 'Em Andamento', // Novo cliente começa em "Em Andamento"
+                createdAt: new Date(),
+            });
+
+            // Salva os novos valores de Responsável e Indicador no localStorage para histórico da UI
+            saveResponsavelList(clientData.responsavel);
+            saveIndicadorList(clientData.indicador);
+            
+            showModal(`Cliente ${clientData.name} cadastrado com sucesso!`, false);
+            document.getElementById('register-form').reset();
+        } catch (e) {
+            console.error("Erro ao adicionar cliente no Firestore:", e);
+            showModal("Erro ao cadastrar cliente. Verifique o console.");
+        }
+    }
+
+    function renderRegisterView() {
+        const currentYear = new Date().getFullYear();
+        const currentMonth = new Date().getMonth() + 1;
+        const responsavelOptions = getResponsavelList().map(r => `<option value="${r}">${r}</option>`).join('');
+        const indicadorOptions = getIndicadorList().map(i => `<option value="${i}">${i}</option>`).join('');
+
+        const html = `
+            <div class="max-w-3xl mx-auto card p-8">
+                <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center">
+                    <i data-lucide="user-plus" class="w-6 h-6 mr-2 text-indigo-600"></i>
+                    Novo Cadastro de Cliente
+                </h2>
+                <form id="register-form" class="space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Nome -->
+                        <div>
+                            <label for="client-name" class="block text-sm font-medium text-gray-700">Nome do Cliente / Empresa</label>
+                            <input type="text" id="client-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border">
+                        </div>
+                        <!-- Valor Estimado -->
+                        <div>
+                            <label for="client-value" class="block text-sm font-medium text-gray-700">Valor Estimado (BRL)</label>
+                            <input type="number" id="client-value" required min="0" step="0.01" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border">
+                        </div>
+                    </div>
+
+                    <!-- Linha 2 -->
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                        <!-- Mês Chegada -->
+                        <div>
+                            <label for="client-month" class="block text-sm font-medium text-gray-700">Mês Chegada</label>
+                            <select id="client-month" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border">
+                                ${Object.keys(MONTH_MAP).filter(m => m != 0).map(m => `
+                                    <option value="${m}" ${parseInt(m) === currentMonth ? 'selected' : ''}>${MONTH_MAP[m]}</option>
+                                `).join('')}
+                            </select>
+                        </div>
+                        <!-- Ano Chegada -->
+                        <div>
+                            <label for="client-year" class="block text-sm font-medium text-gray-700">Ano Chegada</label>
+                            <input type="number" id="client-year" required min="2000" max="2100" value="${currentYear}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border">
+                        </div>
+                        <!-- Grau ABC -->
+                        <div>
+                            <label for="client-grau" class="block text-sm font-medium text-gray-700">Grau (A, B, C)</label>
+                            <select id="client-grau" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border">
+                                <option value="A">A (Alto Potencial)</option>
+                                <option value="B" selected>B (Médio Potencial)</option>
+                                <option value="C">C (Baixo Potencial)</option>
+                            </select>
+                        </div>
+                         <!-- Responsável -->
+                        <div>
+                            <label for="client-responsavel" class="block text-sm font-medium text-gray-700">Responsável</label>
+                            <input list="responsavel-options" id="client-responsavel" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border" placeholder="Nome do responsável">
+                            <datalist id="responsavel-options">
+                                ${responsavelOptions}
+                            </datalist>
+                        </div>
+                    </div>
+                   
+                    <!-- Indicador -->
+                    <div>
+                        <label for="client-indicador" class="block text-sm font-medium text-gray-700">Indicador (Lead Source)</label>
+                        <input list="indicador-options" id="client-indicador" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border" placeholder="Ex: Mídia Paga, Indicação, etc.">
+                        <datalist id="indicador-options">
+                            ${indicadorOptions}
+                        </datalist>
+                    </div>
+
+                    <!-- Notas Iniciais -->
+                    <div>
+                        <label for="client-notes" class="block text-sm font-medium text-gray-700">Notas Iniciais (Opcional)</label>
+                        <textarea id="client-notes" rows="3" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 p-2 border" placeholder="Detalhes importantes sobre o cliente ou o negócio."></textarea>
+                    </div>
+                    
+                    <button type="submit" class="w-full py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 flex items-center justify-center">
+                        <i data-lucide="plus-circle" class="w-5 h-5 mr-2"></i> Cadastrar Cliente
+                    </button>
+                </form>
+            </div>
+        `;
+        document.getElementById('content-container').innerHTML = html;
+        lucide.createIcons();
+        
+        // Adiciona o listener de submissão do formulário
+        document.getElementById('register-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const newClient = {
+                name: document.getElementById('client-name').value,
+                valorEstimado: parseFloat(document.getElementById('client-value').value),
+                mesChegada: parseInt(document.getElementById('client-month').value),
+                anoChegada: parseInt(document.getElementById('client-year').value),
+                grauABC: document.getElementById('client-grau').value,
+                responsavel: document.getElementById('client-responsavel').value.trim(),
+                indicador: document.getElementById('client-indicador').value.trim(),
+                notes: document.getElementById('client-notes').value.trim(),
+            };
+            
+            addClientToFirestore(newClient);
+        });
+    }
+
+    /**
+     * Remove um cliente do Firestore.
+     */
+    async function deleteClientFromFirestore(clientId) {
+        if (!window.db) return showModal("Erro: Firestore não inicializado.");
+        
+        const confirmed = await showModal("Tem certeza que deseja EXCLUIR este cliente? Esta ação não pode ser desfeita.", true);
+        
+        if (confirmed) {
+            try {
+                const clientDocRef = doc(window.db, `artifacts/${window.appId}/public/data/clients`, clientId);
+                await deleteDoc(clientDocRef);
+                showModal("Cliente excluído com sucesso!");
+                // O onSnapshot cuidará da remoção da UI
+            } catch (e) {
+                console.error("Erro ao deletar cliente no Firestore:", e);
+                showModal("Erro ao excluir cliente. Verifique o console.");
+            }
+        }
+    }
+
+
+    function renderClientRow(client) {
+        const statusInfo = KANBAN_STATUS_MAP[client.kanbanStatus] || { label: 'Desconhecido', color: 'text-gray-600 bg-gray-100' };
+        
+        return `
+            <tr class="hover:bg-gray-50 transition duration-100">
+                <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 truncate max-w-xs">${client.name}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${formatCurrency(client.valorEstimado)}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${client.grauABC}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${client.responsavel}</td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusInfo.color}">
+                        ${statusInfo.label}
+                    </span>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium space-x-2">
+                    <button onclick="renderClientDetailModal('${client.id}')" class="text-indigo-600 hover:text-indigo-900 p-1 rounded-md hover:bg-indigo-100" title="Ver Detalhes">
+                        <i data-lucide="eye" class="w-5 h-5"></i>
+                    </button>
+                    <button onclick="deleteClientFromFirestore('${client.id}')" class="text-red-600 hover:text-red-900 p-1 rounded-md hover:bg-red-100" title="Excluir Cliente">
+                        <i data-lucide="trash-2" class="w-5 h-5"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+    }
+
+    function renderClientTable(clients) {
+        const template = document.getElementById('client-list-template');
+        const contentContainer = document.createElement('div');
+        contentContainer.appendChild(template.content.cloneNode(true));
+
+        const tableBody = contentContainer.querySelector('#client-table-body');
+        const noClientsMessage = contentContainer.querySelector('#no-clients-message');
+        
+        if (clients.length === 0) {
+            noClientsMessage.classList.remove('hidden');
+            tableBody.innerHTML = '';
+        } else {
+            noClientsMessage.classList.add('hidden');
+            tableBody.innerHTML = clients.map(client => renderClientRow(client)).join('');
+        }
+        
+        lucide.createIcons();
+        return contentContainer.innerHTML;
+    }
+
+
+    // --- Lógica do Dashboard ---
+
+    function getFilteredClients() {
+        return getStoredClients().filter(client => {
+            const monthMatch = filterMonth === 0 || client.mesChegada === filterMonth;
+            const yearMatch = client.anoChegada === filterYear;
+            return monthMatch && yearMatch;
+        });
+    }
+
+    function generateDonutChart(data, targetId) {
+        const total = data.reduce((sum, item) => sum + item.value, 0);
+        let cumulativePercentage = 0;
+        const radius = 45;
+        const circumference = 2 * Math.PI * radius;
+        const colorMap = {
+            'Em Andamento': GRAPH_BG_COLORS[0],
+            'Fechado': GRAPH_BG_COLORS[1],
+            'Perdido': GRAPH_BG_COLORS[2],
+            'A': GRAPH_BG_COLORS[3],
+            'B': GRAPH_BG_COLORS[4],
+            'C': GRAPH_BG_COLORS[5],
+            'Outros': GRAPH_BG_COLORS[6],
+        };
+
+        let paths = [];
+        data.forEach((item, index) => {
+            const percentage = total === 0 ? 0 : (item.value / total);
+            const offset = circumference - (percentage * circumference);
+            const dasharray = `${percentage * circumference} ${circumference}`;
+            const rotation = cumulativePercentage * 360;
+            const color = colorMap[item.label] || GRAPH_BG_COLORS[index % GRAPH_BG_COLORS.length];
+
+            paths.push(`
+                <circle class="chart-slice" cx="50" cy="50" r="${radius}" fill="transparent" stroke="${color}" 
+                    stroke-width="10" 
+                    stroke-dasharray="${dasharray}" 
+                    stroke-dashoffset="${offset}" 
+                    style="transform: rotate(${rotation}deg); transform-origin: 50% 50%;"
+                    data-label="${item.label}" data-value="${item.value}" data-percentage="${(percentage * 100).toFixed(1)}%">
+                    <title>${item.label}: ${item.value} (${(percentage * 100).toFixed(1)}%)</title>
+                </circle>
+            `);
+
+            cumulativePercentage += percentage;
+        });
+
+        const svgHtml = `
+            <svg class="chart-svg" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                <g style="transform: rotate(-90deg); transform-origin: 50% 50%;">
+                    ${paths.join('')}
+                </g>
+                <text x="50" y="50" text-anchor="middle" dominant-baseline="middle" class="text-1xl font-bold fill-gray-800">${total}</text>
+                <text x="50" y="65" text-anchor="middle" dominant-baseline="middle" class="text-sm fill-gray-500">Total</text>
+            </svg>
+        `;
+
+        document.getElementById(targetId).innerHTML = svgHtml;
+    }
+
+
+    function renderDashboardView() {
+        if (!window.isClientsReady) {
+            document.getElementById('content-container').innerHTML = document.getElementById('loading-state').outerHTML;
+            lucide.createIcons();
+            return;
+        }
+
+        const filteredClients = getFilteredClients();
+        const totalValue = filteredClients.reduce((sum, c) => sum + c.valorEstimado, 0);
+
+        // Agregação de Dados
+        const statusData = KANBAN_COLUMNS.map(col => {
+            const clients = filteredClients.filter(c => c.kanbanStatus === col.id);
+            return {
+                label: col.id,
+                value: clients.length,
+                totalValue: clients.reduce((sum, c) => sum + c.valorEstimado, 0)
+            };
+        });
+
+        const grauData = ['A', 'B', 'C'].map(grau => ({
+            label: grau,
+            value: filteredClients.filter(c => c.grauABC === grau).length
+        }));
+        
+        const currentMonthName = MONTH_MAP[filterMonth];
+        const yearOptions = Array.from(new Set(getStoredClients().map(c => c.anoChegada))).sort((a, b) => b - a);
+
+
+        let html = `
+            <div class="space-y-8">
+                <!-- Filtros -->
+                <div class="card p-4 flex flex-col sm:flex-row items-center justify-between space-y-3 sm:space-y-0 sm:space-x-4">
+                    <div class="flex-shrink-0 text-lg font-bold text-gray-800">
+                        <i data-lucide="filter" class="w-5 h-5 inline-block mr-2 text-indigo-500"></i>
+                        Filtrando Dados
+                    </div>
+                    <div class="flex flex-grow space-x-2">
+                        <!-- Filtro de Ano -->
+                        <select id="filter-year" class="p-2 border rounded-lg focus:ring-indigo-500 focus:border-indigo-500 w-1/2 sm:w-auto">
+                            ${yearOptions.map(y => `<option value="${y}" ${y === filterYear ? 'selected' : ''}>${y}</option>`).join('')}
+                        </select>
+                        <!-- Filtro de Mês -->
+                        <select id="filter-month" class="p-2 border rounded-lg focus:ring-indigo-500 focus:border-indigo-500 w-1/2 sm:w-auto">
+                            ${Object.keys(MONTH_MAP).map(m => `
+                                <option value="${m}" ${parseInt(m) === filterMonth ? 'selected' : ''}>${MONTH_MAP[m]}</option>
+                            `).join('')}
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Cards de Resumo -->
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <!-- Total de Clientes -->
+                    <div class="card bg-indigo-600 text-white">
+                        <p class="text-sm font-medium opacity-80">CLIENTES (${currentMonthName} / ${filterYear})</p>
+                        <p class="text-3xl font-bold mt-2">${filteredClients.length}</p>
+                        <div class="flex items-center mt-3">
+                            <i data-lucide="users" class="w-5 h-5 mr-2"></i>
+                            <span class="text-sm">Total de Leads/Clientes na Carteira</span>
+                        </div>
+                    </div>
+                    <!-- Valor Total Estimado -->
+                    <div class="card bg-green-600 text-white">
+                        <p class="text-sm font-medium opacity-80">VALOR TOTAL ESTIMADO</p>
+                        <p class="text-3xl font-bold mt-2">${formatCurrency(totalValue)}</p>
+                        <div class="flex items-center mt-3">
+                            <i data-lucide="wallet" class="w-5 h-5 mr-2"></i>
+                            <span class="text-sm">Potencial de Fechamento no Período</span>
+                        </div>
+                    </div>
+                    <!-- Média por Negócio -->
+                    <div class="card bg-yellow-500 text-white">
+                        <p class="text-sm font-medium opacity-80">TICKET MÉDIO</p>
+                        <p class="text-3xl font-bold mt-2">${formatCurrency(totalValue / (filteredClients.length || 1))}</p>
+                        <div class="flex items-center mt-3">
+                            <i data-lucide="trending-up" class="w-5 h-5 mr-2"></i>
+                            <span class="text-sm">Valor médio por cliente</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gráficos e Detalhes -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <!-- Gráfico 1: Status Kanban (Oportunidades) -->
+                    <div class="card col-span-1">
+                        <h3 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                            <i data-lucide="pie-chart" class="w-5 h-5 mr-2 text-indigo-600"></i>
+                            Oportunidades por Status
+                        </h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="chart-container" id="status-chart-svg"></div>
+                            <div class="space-y-2">
+                                ${statusData.map(item => `
+                                    <div class="flex justify-between items-center text-sm">
+                                        <div class="flex items-center">
+                                            <span class="w-3 h-3 rounded-full mr-2" style="background-color: ${KANBAN_COLUMNS.find(c => c.id === item.label)?.color.replace('bg-', '#').replace('-500', '500') || GRAPH_BG_COLORS[6]}"></span>
+                                            <span class="font-medium text-gray-700">${item.label} (${item.value})</span>
+                                        </div>
+                                        <span class="font-semibold text-gray-900">${formatCurrency(item.totalValue)}</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Gráfico 2: Grau ABC (Potencial) -->
+                    <div class="card col-span-1">
+                        <h3 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                            <i data-lucide="line-chart" class="w-5 h-5 mr-2 text-teal-600"></i>
+                            Potencial por Grau (A, B, C)
+                        </h3>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div class="chart-container" id="grau-chart-svg"></div>
+                            <div class="space-y-2">
+                                ${grauData.map((item, index) => `
+                                    <div class="flex justify-between items-center text-sm">
+                                        <div class="flex items-center">
+                                            <span class="w-3 h-3 rounded-full mr-2" style="background-color: ${GRAPH_BG_COLORS[index + 3]}"></span>
+                                            <span class="font-medium text-gray-700">Grau ${item.label} (${item.value})</span>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Informações do Usuário/App ID -->
+                    <div class="card col-span-1 p-6 bg-gray-50 border border-gray-200">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-3 flex items-center">
+                            <i data-lucide="server" class="w-5 h-5 mr-2 text-gray-600"></i>
+                            Informações de Conexão
+                        </h3>
+                        <p class="text-sm mb-1">
+                            <span class="font-medium text-gray-600">ID do Usuário (UID):</span> <br>
+                            <code class="text-xs text-indigo-700 break-all">${window.auth?.currentUser?.uid || 'Aguardando autenticação...'}</code>
+                        </p>
+                        <p class="text-sm mt-3">
+                            <span class="font-medium text-gray-600">ID do Aplicativo:</span> <br>
+                            <code class="text-xs text-gray-700 break-all">${window.appId}</code>
+                        </p>
+                        <p class="text-xs text-gray-500 mt-2">Os dados são compartilhados publicamente neste App ID.</p>
+                    </div>
+
+                </div>
+
+                <!-- Tabela de Clientes -->
+                ${renderClientTable(filteredClients)}
+
+            </div>
+        `;
+        document.getElementById('content-container').innerHTML = html;
+        lucide.createIcons();
+        
+        // Gera os gráficos SVG
+        generateDonutChart(statusData, 'status-chart-svg');
+        generateDonutChart(grauData, 'grau-chart-svg');
+
+        // Adiciona listeners para os filtros
+        document.getElementById('filter-month').addEventListener('change', (e) => {
+            filterMonth = parseInt(e.target.value);
+            renderDashboardView(); 
+        });
+        document.getElementById('filter-year').addEventListener('change', (e) => {
+            filterYear = parseInt(e.target.value);
+            renderDashboardView(); 
+        });
+    }
+
+    // --- Lógica de Navegação de Abas ---
+    
+    function showCurrentView() {
+        const contentContainer = document.getElementById('content-container');
+        const loadingState = document.getElementById('loading-state');
+        
+        if (!window.isClientsReady) {
+             contentContainer.innerHTML = loadingState.outerHTML;
+             lucide.createIcons();
+             return;
+        } else if (loadingState) {
+             loadingState.remove(); // Remove o estado de loading se o conteúdo for renderizado
+        }
+
+        switch (currentView) {
+            case 'kanban':
+                renderKanbanView();
+                break;
+            case 'register':
+                renderRegisterView();
+                break;
+            case 'dashboard':
+            default:
+                renderDashboardView();
+                break;
+        }
+    }
+
+    function handleTabClick(e) {
+        const newView = e.currentTarget.dataset.view;
+        if (newView === currentView) return;
+
+        // Atualiza botões ativos
+        document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+        e.currentTarget.classList.add('active');
+        
+        currentView = newView;
+        showCurrentView();
+    }
+
+    // Inicialização da Aplicação
+    document.addEventListener('DOMContentLoaded', () => {
+        // Adiciona listeners de navegação
+        document.querySelectorAll('.tab-button').forEach(button => {
+            button.addEventListener('click', handleTabClick);
+        });
+        
+        // Chamada inicial para mostrar o dashboard (será adiada até que o Firestore esteja pronto)
+        showCurrentView();
+        
+        // Cria os ícones do lucide inicialmente
+        lucide.createIcons();
+    });
+    
+    // Configura a variável global para que o setupFirebase na tag <script type="module"> 
+    // possa chamar as funções de renderização
+    window.showCurrentView = showCurrentView;
+    
+</script>
+</body>
+</html>
